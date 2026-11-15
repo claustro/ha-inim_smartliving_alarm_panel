@@ -140,6 +140,10 @@ def not_ready_request(scenario: int, model: PanelModel) -> bytes:
 
 def parse_read_reply(reply: bytes, length: int) -> bytes:
     """Check a read reply (data + checksum) and return the data."""
+    # Local patch: a real SmartLAN/G (fw 6.08) answers with the data only,
+    # without the trailing checksum byte
+    if len(reply) == length:
+        return reply
     if len(reply) != length + 1:
         raise ProtocolError(f"expected {length + 1} bytes, got {len(reply)}")
     data = reply[:-1]

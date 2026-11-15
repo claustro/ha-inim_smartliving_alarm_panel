@@ -248,20 +248,46 @@ class LegacyPanelClient:
         )
 
     async def execute_set_zone_excluded_status(
-        self, zone_internal_index: int, excluded_status: bool
+        self,
+        zone_internal_index: int,
+        excluded_status: bool,
+        second_zone: bool = False,
     ) -> bool:
         """Bypass (True) or include the zone at a physical slot; True if accepted."""
         return await self._run(
             f"Bypass of slot {zone_internal_index}",
-            self.panel.bypass_zone(zone_internal_index, bypass=excluded_status),
+            self.panel.bypass_zone(
+                zone_internal_index, bypass=excluded_status, second_zone=second_zone
+            ),
         )
 
+    async def read_not_ready_zones(
+        self, scenario_number_0_indexed: int
+    ) -> list[int] | None:
+        """1-based numbers of the zones not at rest for a scenario; None on error."""
+        try:
+            zones = await self.panel.not_ready_zones(scenario_number_0_indexed)
+        except _ERRORS as err:
+            _LOGGER.warning(
+                "Cannot read the not-ready zones of scenario %s: %s",
+                scenario_number_0_indexed,
+                err,
+            )
+            return None
+        return sorted(zone + 1 for zone in zones)
+
     async def execute_activate_scenario(self, scenario_number_0_indexed: int) -> bool:
-        """Activate a scenario (0-based) if no zone prevents it; True if done."""
+        """Activate a scenario (0-based), also with zones not at rest; True if done.
+
+        Local change: the not-ready zones are no longer a reason to refuse; the
+        caller reports them (see the button).
+        """
         try:
             return await self._run(
                 f"Scenario {scenario_number_0_indexed}",
-                self.panel.activate_scenario(scenario_number_0_indexed),
+                self.panel.activate_scenario(
+                    scenario_number_0_indexed, check_ready=False
+                ),
             )
         except NotReadyError as err:
             _LOGGER.warning("%s", err)
@@ -316,7 +342,7 @@ def configuration_dict(config: PanelConfiguration) -> dict[str, Any]:
         },
         "zones": {
             "raw_hex_full": config.zone_labels.raw.hex(),
-            "zone_names": _names(config.zone_labels.raw)[: model.terminals],
+            "zone_names": _names(config.zone_labels.raw)[: model.zones],
         },
         "zones_config": {
             "raw_hex_part1_full_response": config.zone_records.hex(),
@@ -352,17 +378,23 @@ def _zones(config: PanelConfiguration) -> list[dict[str, Any]]:
         if terminal != 0xFF
     }
     zones = []
-    for index in range(model.terminals):
+    for index in range(model.zones):
+        # Zones L..2L-1 are the second zones; they exist only on DOUBLE terminals
+        terminal_index = index % model.terminals
         record = config.zone_records[
             index * model.zone_record_length : (index + 1) * model.zone_record_length
         ]
         terminal = config.terminal_records[
-            index * model.terminal_record_length : (index + 1)
+            terminal_index * model.terminal_record_length : (terminal_index + 1)
             * model.terminal_record_length
         ]
+        if index >= model.terminals and terminal[11] != 3:  # 3 = DOUBLE
+            continue
         activation, balancing, sensor = record[2], terminal[5], terminal[6]
         zone: dict[str, Any] = {
             "zone_index": index,
+            "terminal_index": terminal_index,
+            "second_zone": index >= model.terminals,
             "assigned_areas": _areas(record[0] | record[1] << 8, model),
             "activation_type_val": activation,
             "activation_type_desc": ACTIVATION_TYPES.get(
@@ -378,8 +410,8 @@ def _zones(config: PanelConfiguration) -> list[dict[str, Any]]:
             "sensor_type_val": sensor,
             "sensor_type_desc": SENSOR_TYPES.get(sensor, f"Unknown (0x{sensor:02X})"),
         }
-        if index in slots:
-            zone["internal_index"] = slots[index]
+        if terminal_index in slots:
+            zone["internal_index"] = slots[terminal_index]
         zones.append(zone)
     return zones
 
@@ -456,19 +488,25 @@ def _area_status(data: bytes, model: PanelModel) -> dict[str, Any]:
         byte = data[(area - 1) // 2]
         nibble = byte >> 4 if area % 2 == 0 else byte & 0x0F
         statuses[area] = {1: "armed", 4: "disarmed"}.get(nibble, "unknown")
-    memory = data[10]  # low byte of the alarm memory mask only
+    # Local change: the masks follow the mode nibbles (6 bytes on a 1050, 8 on a
+    # 10100), 2 bytes each: alarm, tamper, alarm memory, tamper memory, auto-arm.
+    # An area is "triggered" while in alarm or while its alarm memory is set.
+    offset = model.area_mode_bytes
+    alarm = int.from_bytes(data[offset : offset + 2], "little")
+    memory = int.from_bytes(data[offset + 4 : offset + 6], "little")
+    flagged = alarm | memory
     return {
         "raw_hex": data.hex(),
         "area_statuses": statuses,
         "triggered_areas": [
-            area for area in range(1, model.areas + 1) if memory >> (area - 1) & 1
+            area for area in range(1, model.areas + 1) if flagged >> (area - 1) & 1
         ],
     }
 
 
 def _zone_status(data: bytes, model: PanelModel) -> dict[str, Any]:
     statuses: dict[int, str] = {}
-    for zone_pair in range(model.terminals // 2):  # pairs of the first L zones
+    for zone_pair in range(model.terminals):  # pairs of all 2L zones
         byte = data[zone_pair // 2]
         value = byte >> 4 if zone_pair % 2 else byte & 0x0F
         lower, higher = _ZONE_PAIRS.get(value, ("unknown", "unknown"))
@@ -493,7 +531,7 @@ def _zone_bits(
 ) -> dict[int, str]:
     return {
         zone: set_text if data[(zone - 1) // 8] >> ((zone - 1) % 8) & 1 else clear_text
-        for zone in range(1, model.terminals + 1)
+        for zone in range(1, model.zones + 1)
     }
 
 

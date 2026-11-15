@@ -1,3 +1,49 @@
+> # Fork notice: SmartLAN/G + SmartLiving 10100
+>
+> This is a **fork** of [matteoraf/ha-inim_smartliving_alarm_panel](https://github.com/matteoraf/ha-inim_smartliving_alarm_panel),
+> branch `next` (0.4.0a1 preview, commit `cee7bf4`), with the changes needed to run it on a **real SmartLAN/G board with a
+> SmartLiving 10100 (firmware 6.08)**. It is shared as-is so that others with the same hardware can try it; the changes are meant to be
+> proposed upstream. All credit for the integration goes to the original author. Licence: GPL-3.0, unchanged.
+>
+> **The upstream test suite has NOT been run on this fork** (the author's tests need Python 3.13+ and Home Assistant's test dependencies).
+> The changes were tested on one real panel, in production, since 2026-11-15.
+>
+> ## Tested setup
+> - Panel: SmartLiving **10100**, firmware **6.08**; board: **SmartLAN/G**; Home Assistant Core 2026.11.
+> - One panel shared by two homes: areas 1-3 and 4-5, 7 scenarios, 74 named zones (22 of them second zones of double terminals).
+>
+> ## What changed compared with upstream (`cee7bf4`)
+> | File | Change | Why |
+> |---|---|---|
+> | `protocol/frames.py` | `parse_read_reply` also accepts a reply with the data only (no trailing checksum byte) | A real SmartLAN/G answers read requests **without** the checksum. Upstream expects `length + 1` bytes, so the config flow failed with `invalid_auth` although credentials were right |
+> | `protocol/model.py` | New `SMARTLIVING_10100_FW6` profile and `model_for()` branch | The panel was handled as a 1050 and its PIN was not found (`invalid_pin`) |
+> | `legacy.py` | Area alarm/alarm-memory read at the offset of the model (not byte 10); labels, zone configuration and zone state for **second zones** (zone numbers above the terminal count, DOUBLE terminals only); `read_not_ready_zones()`; scenario activation no longer refuses when zones are not ready; `second_zone` flag for exclusion | See below |
+> | `switch.py`, `binary_sensor.py` | Entities for second zones (sensor, "triggered" and the "Enabled" switch; exclusion uses the slot of the terminal with `second_zone=True`) | Upstream creates entities for the first 100 inputs only |
+> | `button.py` | Before activating a scenario it reads the zones not at rest, fires the event `inim_smartliving_alarm_not_ready_zones` (`scenario_index`, `scenario_name`, `zones: [{id, name}]`, **also when the list is empty**), then activates anyway | Arming with a window open is a normal use case here; automations can decide what to announce |
+>
+> **Behaviour difference to be aware of:** scenario buttons **no longer block** when some zone is not at rest. Review your automations if you relied on the old refusal.
+>
+> ## SmartLiving 10100 memory map used by the profile (fw 6.08)
+> Areas 15, terminals 100, physical slots 240, codes 100. EEPROM: PIN table `0x0A4C7` (6 bytes per code), user code records `0x0A733` (65 bytes each, **inferred** from the layout), zone records `0x089C5` (9 bytes, 2 x terminals), terminal records `0x090CD`, physical map `0x0CF75`, scenario records `0x0C81F` (**10 bytes** each), label bank `0x10000`. Zone labels start at `0x100F0`.
+> The terminal table and terminal records match what the [EnrCol fork](https://github.com/EnrCol/ha-inim_smartliving_alarm_panel) documents for the 10100.
+>
+> ## Not verified / known limits
+> - **A real alarm has not been seen on the entities.** The area alarm/memory offset was fixed from the protocol decoder and checked with constructed data only (upstream `next` has since changed this code in #36, so this part is probably obsolete).
+> - `code_records` was inferred; `expanders`, `keys`, `event_ring_size` and `event_log` are copied from the 1050 profile. **Do not trust the event log on a 10100.**
+> - Excluding a **second** zone through the switch has not been tested (first zones were).
+> - On the SmartLAN/G the wire length of a reply depends on 16-byte AES blocks. With replies **without** checksum, reads whose length is 15, 31, 47... bytes could wait for one block too many (not hit so far, not tested).
+> - Arming from the panel with open zones, long-running use and other firmware versions are untested.
+>
+> ## Installing
+> - **HACS:** add this repository as a *custom repository* (category *Integration*), install, restart Home Assistant.
+> - **Manual:** copy `custom_components/inim_smartliving_alarm` into your `config/custom_components/`.
+> - Add the integration, choose **SmartLAN/G board (experimental)**. Host and port of the board (the installer software proposes 5004), the **web user name and password of the board** (they derive the encryption key) and a user PIN.
+> - After updating the code press the **Re-read panel configuration** button: entities are created from the configuration saved when the integration was added.
+> - The board accepts **one TCP client**: close the installer software while the integration is connected.
+>
+> ## Please
+> Never post raw memory dumps of a panel: they contain every user PIN.
+
 Home Assistant Integration for Inim SmartLiving Alarm Systems
 =============================================================
 

@@ -148,6 +148,37 @@ SMARTLIVING_1050_FW6 = PanelModel(
 )
 
 
+# SmartLiving 10100, firmware 6.x. Verified on a real panel (fw 6.08, SmartLAN/G)
+# by reading its memory: areas, label bank, zone/terminal/scenario/PIN tables.
+# NOT verified (copied from the 1050 or guessed): expanders, keys,
+# event_ring_size, event_log. code_records (65 bytes) inferred from the periodic layout.
+SMARTLIVING_10100_FW6 = PanelModel(
+    name="SmartLiving 10100",
+    areas=15,
+    terminals=100,
+    physical_slots=240,
+    codes=100,
+    keypads=15,
+    readers=30,
+    expanders=20,
+    keys=100,
+    timers=10,
+    scenario_record_length=10,
+    zone_record_length=9,
+    code_record_length=65,
+    code_output_mask_length=14,
+    event_ring_size=1000,
+    pin_table=0x0A4C7,
+    code_records=0x0A733,
+    zone_records=0x089C5,
+    terminal_records=0x090CD,
+    physical_map=0x0CF75,
+    scenario_records=0x0C81F,
+    event_log=0x19204,
+    label_bank=0x10000,
+)
+
+
 def model_for(info: FirmwareInfo) -> PanelModel:
     """The model profile for a panel, or UnsupportedPanelError."""
     if info.major < 6:
@@ -156,4 +187,6 @@ def model_for(info: FirmwareInfo) -> PanelModel:
         )
     if info.model == "1050":
         return SMARTLIVING_1050_FW6
+    if info.model == "10100":
+        return SMARTLIVING_10100_FW6
     raise UnsupportedPanelError(f"SmartLiving {info.model} is not supported yet")

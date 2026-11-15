@@ -28,12 +28,16 @@ from .const import (
     KEY_INIT_SYSTEM_INFO,
     KEY_INIT_SYSTEM_INFO_TYPE,
     KEY_INIT_SYSTEM_INFO_VERSION,
+    KEY_INIT_ZONE_NAMES,
+    KEY_INIT_ZONES,
 )
 from .legacy import LegacyPanelClient
 from .panel_config import async_reread_panel_configuration
 from .utils import async_handle_scenario_activation_failure
 
 _LOGGER = logging.getLogger(__name__)
+
+EVENT_NOT_READY_ZONES = "inim_smartliving_alarm_not_ready_zones"
 
 
 async def async_setup_entry(
@@ -180,7 +184,31 @@ class InimScenarioActivationButton(ButtonEntity):
         action_name = f"activate scenario '{self._scenario_name}' (index {self._scenario_index_0_based})"
         _LOGGER.info("Button '%s' pressed: Attempting to %s", self.name, action_name)
         try:
-            # execute_activate_scenario checks that no zone prevents it first
+            # Local change: report the zones not at rest on the event bus, then
+            # activate the scenario anyway
+            not_ready = await self.api_client.read_not_ready_zones(
+                self._scenario_index_0_based
+            )
+            if not_ready is not None:  # also when empty: automations may add checks
+                zone_names = (
+                    self._initial_panel_config.get(KEY_INIT_ZONES) or {}
+                ).get(KEY_INIT_ZONE_NAMES, [])
+                self.hass.bus.async_fire(
+                    EVENT_NOT_READY_ZONES,
+                    {
+                        "scenario_index": self._scenario_index_0_based,
+                        "scenario_name": self._scenario_name,
+                        "zones": [
+                            {
+                                "id": zone,
+                                "name": zone_names[zone - 1]
+                                if 0 < zone <= len(zone_names)
+                                else f"Zone {zone}",
+                            }
+                            for zone in not_ready
+                        ],
+                    },
+                )
             success = await self.api_client.execute_activate_scenario(
                 self._scenario_index_0_based
             )

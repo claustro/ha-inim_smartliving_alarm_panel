@@ -118,7 +118,11 @@ async def async_setup_entry(
 
     if all_zone_names and zones_config_detailed:
         # Apply the limit before iterating
-        zones_to_process = zones_config_detailed[:num_zones_to_create]
+        zones_to_process = [
+            z
+            for z in zones_config_detailed
+            if z.get("terminal_index", z.get("zone_index", 0)) < num_zones_to_create
+        ]
         _LOGGER.debug(
             "Setting up %s Zone Enabled Switches (Limit: %s, Available: {len(zones_config_detailed)})",
             len(zones_to_process),
@@ -148,6 +152,7 @@ async def async_setup_entry(
                         zone_id_1_based,
                         display_zone_name,
                         internal_index,
+                        second_zone=bool(zone_detail.get("second_zone")),
                     )
                 )
             else:
@@ -295,10 +300,12 @@ class InimZoneEnabledSwitch(CoordinatorEntity, SwitchEntity):
         zone_id_1_based: int,
         zone_name: str,
         zone_internal_index: int,
+        second_zone: bool = False,
     ) -> None:
         super().__init__(coordinator)
         self.api_client = api_client
         self.config_entry = config_entry
+        self._second_zone = second_zone
         self._panel_display_name = panel_display_name
         self._system_info = system_info
         self._zone_id_1_based = zone_id_1_based
@@ -364,6 +371,7 @@ class InimZoneEnabledSwitch(CoordinatorEntity, SwitchEntity):
         if await self.api_client.execute_set_zone_excluded_status(
             zone_internal_index=self._zone_internal_index,
             excluded_status=False,  # False means enable
+            second_zone=self._second_zone,
         ):
             await self.coordinator.async_request_refresh()
 
@@ -377,6 +385,7 @@ class InimZoneEnabledSwitch(CoordinatorEntity, SwitchEntity):
         if await self.api_client.execute_set_zone_excluded_status(
             zone_internal_index=self._zone_internal_index,
             excluded_status=True,  # True means exclude
+            second_zone=self._second_zone,
         ):
             await self.coordinator.async_request_refresh()
 

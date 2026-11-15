@@ -131,6 +131,27 @@ async def async_setup_entry(
             )
         )
 
+    # Second zones of the DOUBLE terminals (zone numbers above the terminal count)
+    for zc in detailed_zone_configs:
+        if not zc.get("second_zone"):
+            continue
+        if zc.get("terminal_index", 0) >= num_zones_to_create:
+            continue
+        i = zc["zone_index"]
+        zone_name = (
+            all_zone_names[i] if i < len(all_zone_names) and all_zone_names[i] else f"Zone {i + 1}"
+        )
+        binary_sensors_to_add.append(
+            InimZoneBinarySensor(
+                coordinator, entry, panel_display_name, system_info, i, zone_name, zc
+            )
+        )
+        binary_sensors_to_add.append(
+            InimZoneTriggeredBinarySensor(
+                coordinator, entry, panel_display_name, system_info, i, zone_name
+            )
+        )
+
     num_areas_to_create = min(len(all_area_names), limit_areas)
     _LOGGER.debug(
         "Setting up %s Area Triggered Binary Sensors (Limit: %s, Available: %s)",
